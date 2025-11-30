@@ -1,0 +1,41 @@
+/* CSS for PDF generation - ensures images fit within page */
+@page {
+    size: A4;
+    margin: 2cm;
+}
+
+body {
+    font-family: Arial, sans-serif;
+    line-height: 1.6;
+    max-width: 100%;
+}
+
+/* Scale images to fit page width while maintaining aspect ratio */
+img {
+    max-width: 100%;
+    max-height: 70vh; /* Limit height to 70% of viewport height */
+    height: auto;
+    width: auto;
+    display: block;
+    margin: 1em auto;
+    page-break-inside: avoid;
+}
+
+/* Ensure images don't break across pages */
+figure {
+    page-break-inside: avoid;
+}
+
+/* Handle large images by scaling them down */
+img[src*=".jpg"],
+img[src*=".jpeg"],
+img[src*=".png"],
+img[src*=".gif"],
+img[src*=".bmp"] {
+    max-width: 100%;
+    max-height: 70vh;
+    object-fit: contain;
+}
+
+
+
