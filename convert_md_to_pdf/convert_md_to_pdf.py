@@ -17,7 +17,6 @@ PIKEPDF_AVAILABLE = False
 PYPDF_AVAILABLE = False
 try:
     from pikepdf import Pdf, AttachedFileSpec
-    from pathlib import Path
     PIKEPDF_AVAILABLE = True
 except ImportError:
     try:
@@ -76,13 +75,8 @@ try:
 except ImportError:
     DOCX2PDF_AVAILABLE = False
 
-# Try to import python-docx for reading DOCX files (fallback)
-PYTHON_DOCX_AVAILABLE = False
-try:
-    from docx import Document
-    PYTHON_DOCX_AVAILABLE = True
-except ImportError:
-    PYTHON_DOCX_AVAILABLE = False
+# Note: python-docx import removed - not currently used
+# If needed in the future, can be re-added with: from docx import Document
 
 # DOC to PDF conversion tool detection (for older .doc files)
 DOC_TO_PDF_AVAILABLE = False
@@ -1009,6 +1003,5 @@ log_print(f"Successfully converted: {converted_files}")
 log_print(f"Skipped: {skipped_files}")
 log_print(f"Timeouts (>300s): {timeout_files}")
 log_print(f"Errors: {error_files}")
-log_print(f"PDFs saved to: {output_dir}")
 log_print(f"{'='*60}")
 
