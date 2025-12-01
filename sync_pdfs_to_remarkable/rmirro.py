@@ -9,6 +9,61 @@ import time
 import argparse
 import shutil
 import sys
+import io
+
+# Set up UTF-8 encoding for Windows console output - MUST be done before any other operations
+if sys.platform == 'win32':
+    # Set environment variables for UTF-8
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    
+    # Try to set console to UTF-8 mode
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, ValueError):
+        # Python < 3.7 or reconfigure not available, wrap stdout/stderr
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            # If that fails, at least set the encoding attribute
+            if hasattr(sys.stdout, 'buffer'):
+                sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+            if hasattr(sys.stderr, 'buffer'):
+                sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
+def safe_print(*args, **kwargs):
+    """Safely print text, handling Unicode encoding errors."""
+    try:
+        print(*args, **kwargs)
+    except (UnicodeEncodeError, UnicodeDecodeError) as e:
+        # If encoding fails, replace problematic characters
+        try:
+            # Convert all args to safe strings
+            safe_args = []
+            for arg in args:
+                if isinstance(arg, bytes):
+                    safe_args.append(arg.decode('utf-8', errors='replace'))
+                elif isinstance(arg, str):
+                    safe_args.append(arg.encode('utf-8', errors='replace').decode('utf-8', errors='replace'))
+                else:
+                    safe_args.append(str(arg))
+            print(*safe_args, **kwargs)
+        except Exception:
+            # Last resort: print as ASCII with replacements
+            try:
+                safe_args = []
+                for arg in args:
+                    if isinstance(arg, bytes):
+                        safe_args.append(arg.decode('ascii', errors='replace'))
+                    elif isinstance(arg, str):
+                        safe_args.append(arg.encode('ascii', errors='replace').decode('ascii', errors='replace'))
+                    else:
+                        safe_args.append(str(arg))
+                print(*safe_args, **kwargs)
+            except Exception:
+                # Absolute last resort: print repr
+                print(*[repr(arg) for arg in args], **kwargs)
 
 # directory of this file
 # (e.g. /some/absolute/path/rmirro)
@@ -33,7 +88,7 @@ parser.add_argument("--no-pull", action="store_true", help="skip pulling files f
 
 # Print an error message and exit
 def panic(error):
-    print("ERROR: " + error)
+    safe_print("ERROR: " + str(error))
     exit(1) # nonzero status code marks failure
 
 # Run a shell command on the local computer,
