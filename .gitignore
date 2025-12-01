@@ -1,3 +1,4 @@
 sync_pdfs_to_remarkable/root@192.168.1.226/**
 sync_pdfs_to_remarkable/root@192.168.1.226_backup/**
 sync_pdfs_to_remarkable/root@192.168.1.226_metadata/**
+convert_md_to_pdf/__pycache__/**
