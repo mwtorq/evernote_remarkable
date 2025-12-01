@@ -10,6 +10,28 @@ import subprocess
 import sys
 import argparse
 from pathlib import Path
+import io
+
+# Set up UTF-8 encoding for Windows console output - MUST be done before any other imports/operations
+if sys.platform == 'win32':
+    # Set environment variables for UTF-8
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    
+    # Try to set console to UTF-8 mode
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except (AttributeError, ValueError):
+        # Python < 3.7 or reconfigure not available, wrap stdout/stderr
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError):
+            # If that fails, at least set the encoding attribute
+            if hasattr(sys.stdout, 'buffer'):
+                sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+            if hasattr(sys.stderr, 'buffer'):
+                sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 # Configuration
 SOURCE_DIR = r'C:\Users\mwtorq\enexpdf'
@@ -282,6 +304,41 @@ def filter_duplicate_messages(output):
     
     return '\n'.join(filtered_lines)
 
+def safe_print(text, end='\n', flush=True):
+    """Safely print text, handling Unicode encoding errors."""
+    if text is None:
+        text = ''
+    
+    # Convert to string if needed
+    if not isinstance(text, str):
+        try:
+            text = str(text)
+        except Exception:
+            text = repr(text)
+    
+    try:
+        print(text, end=end, flush=flush)
+    except (UnicodeEncodeError, UnicodeDecodeError) as e:
+        # If encoding fails, replace problematic characters
+        try:
+            # Try to encode/decode with UTF-8 and replace errors
+            if isinstance(text, bytes):
+                safe_text = text.decode('utf-8', errors='replace')
+            else:
+                safe_text = text.encode('utf-8', errors='replace').decode('utf-8', errors='replace')
+            print(safe_text, end=end, flush=flush)
+        except Exception:
+            # Last resort: print as ASCII with replacements
+            try:
+                if isinstance(text, bytes):
+                    safe_text = text.decode('ascii', errors='replace')
+                else:
+                    safe_text = text.encode('ascii', errors='replace').decode('ascii', errors='replace')
+                print(safe_text, end=end, flush=flush)
+            except Exception:
+                # Absolute last resort: print repr
+                print(repr(text), end=end, flush=flush)
+
 def process_output_lines(process):
     """Process output lines from a subprocess, filtering verbose duplicate messages but keeping status updates.
     
@@ -296,25 +353,33 @@ def process_output_lines(process):
         # Check if process has finished
         if process.poll() is not None:
             # Process finished, read any remaining output
-            remaining = process.stdout.read()
-            if remaining:
-                for line in remaining.splitlines(True):
-                    if '] Skipped duplicate:' not in line:
-                        print(line, end='', flush=True)
+            try:
+                remaining = process.stdout.read()
+                if remaining:
+                    for line in remaining.splitlines(True):
+                        if '] Skipped duplicate:' not in line:
+                            safe_print(line, end='')
+            except Exception as e:
+                # If reading fails, just continue
+                pass
             break
         
         # Read available output
-        line = process.stdout.readline()
-        if line:
-            # Filter only verbose individual duplicate messages (format: "  [X] Skipped duplicate: ...")
-            # Keep status updates from rmirro.py (format: "  Skipped X duplicate(s)...")
-            # Keep summary messages (format: "...X duplicate(s) skipped")
-            if '] Skipped duplicate:' not in line:
-                # Print all other lines normally (including status updates every 10)
-                print(line, end='', flush=True)
-        else:
-            # No output available yet, small sleep to avoid busy-waiting
-            time.sleep(0.01)
+        try:
+            line = process.stdout.readline()
+            if line:
+                # Filter only verbose individual duplicate messages (format: "  [X] Skipped duplicate: ...")
+                # Keep status updates from rmirro.py (format: "  Skipped X duplicate(s)...")
+                # Keep summary messages (format: "...X duplicate(s) skipped")
+                if '] Skipped duplicate:' not in line:
+                    # Print all other lines normally (including status updates every 10)
+                    safe_print(line, end='')
+        except Exception as e:
+            # If reading fails, continue
+            pass
+        
+        # No output available yet, small sleep to avoid busy-waiting
+        time.sleep(0.01)
     
     return process.returncode
 
@@ -354,17 +419,26 @@ def run_rmirro(no_pull=False, verbose=False):
                 print(f"  Passing --verbose flag to rmirro")
             flags_str = " " + " ".join(flags) if flags else ""
             # Use -u flag for unbuffered Python output to ensure real-time display
-            wsl_cmd = f"cd {os.path.dirname(wsl_script_path)} && python3 -u {wsl_script_path} {SSH_NAME}{flags_str}"
+            # Set UTF-8 encoding environment variables
+            wsl_cmd = f"export PYTHONIOENCODING=utf-8 && export PYTHONUTF8=1 && cd {os.path.dirname(wsl_script_path)} && python3 -u {wsl_script_path} {SSH_NAME}{flags_str}"
             print(f"  WSL command: {wsl_cmd}")
             # Stream output in real-time while filtering duplicate messages
             # bufsize=1 enables line buffering for real-time output
+            # Set encoding to UTF-8 with error handling
+            # Pass UTF-8 environment variables to subprocess
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            env['PYTHONUTF8'] = '1'
             process = subprocess.Popen(
                 ['wsl', 'bash', '-c', wsl_cmd],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 universal_newlines=True,
-                bufsize=1
+                bufsize=1,
+                env=env
             )
             # Process output line by line in real-time with duplicate filtering
             returncode = process_output_lines(process)
@@ -402,14 +476,22 @@ def run_rmirro(no_pull=False, verbose=False):
             print(f"Running: {' '.join(rmirro_args)}")
             # Stream output in real-time while filtering duplicate messages
             # bufsize=1 enables line buffering for real-time output
+            # Set encoding to UTF-8 with error handling
+            # Pass UTF-8 environment variables to subprocess
+            env = os.environ.copy()
+            env['PYTHONIOENCODING'] = 'utf-8'
+            env['PYTHONUTF8'] = '1'
             process = subprocess.Popen(
                 rmirro_args,
                 cwd=os.path.dirname(rmirro_script_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                encoding='utf-8',
+                errors='replace',
                 universal_newlines=True,
-                bufsize=1
+                bufsize=1,
+                env=env
             )
             # Process output line by line in real-time with duplicate filtering
             returncode = process_output_lines(process)

@@ -12,7 +12,7 @@ import tempfile
 import json
 
 # Try to import pikepdf for PDF attachment embedding (most reliable)
-# Fallback to pypdf/PyPDF2 if pikepdf not available
+# Fallback to pypdf/PyPDF2, if pikepdf not available
 PIKEPDF_AVAILABLE = False
 PYPDF_AVAILABLE = False
 try:
