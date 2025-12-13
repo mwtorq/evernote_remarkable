@@ -168,10 +168,22 @@ class Remarkable:
 
     # Generate IDs of all RM files
     def ids(self):
-        for filename in os.listdir(self.raw_dir_local):
-            id, ext = os.path.splitext(filename)
-            if ext == ".metadata":
-                yield id
+        try:
+            if not os.path.exists(self.raw_dir_local):
+                # Directory doesn't exist - return empty (no metadata files)
+                return
+            for filename in os.listdir(self.raw_dir_local):
+                id, ext = os.path.splitext(filename)
+                if ext == ".metadata":
+                    yield id
+        except PermissionError as e:
+            safe_print(f"WARNING: Permission denied accessing metadata directory: {self.raw_dir_local}")
+            safe_print(f"  Error: {e}")
+            safe_print(f"  Continuing without metadata - some operations may be limited")
+            return  # Return empty generator
+        except Exception as e:
+            safe_print(f"WARNING: Error listing metadata directory: {e}")
+            return  # Return empty generator
 
     # Download all raw *.metadata files from RM with rsync
     def download_metadata(self):
@@ -223,8 +235,32 @@ class Remarkable:
 
     # Read a RM file that has been downloaded to PC
     def read_file(self, filename):
-        with open(self.raw_dir_local + "/" + filename, "r") as file:
-            return file.read()
+        file_path = os.path.join(self.raw_dir_local, filename)
+        # Handle permission errors and file locking issues
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with open(file_path, "r", encoding='utf-8') as file:
+                    return file.read()
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    # Wait a bit and retry (file might be locked by another process)
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                else:
+                    # Last attempt failed - log and raise
+                    safe_print(f"WARNING: Permission denied reading {filename} after {max_retries} attempts")
+                    safe_print(f"  File path: {file_path}")
+                    safe_print(f"  Error: {e}")
+                    safe_print(f"  This may be a temporary file lock - continuing without this metadata")
+                    raise
+            except FileNotFoundError:
+                # File doesn't exist - this is okay for optional metadata
+                raise
+            except Exception as e:
+                # Other errors - log and re-raise
+                safe_print(f"WARNING: Error reading {filename}: {e}")
+                raise
 
     # Read a RM JSON file that has been downloaded to PC
     def read_json(self, filename):
@@ -232,7 +268,39 @@ class Remarkable:
 
     # Read a RM .metadata file that has been downloaded to PC
     def read_metadata(self, id):
-        return self.read_json(f"{id}.metadata")
+        try:
+            return self.read_json(f"{id}.metadata")
+        except PermissionError as e:
+            # Handle permission errors gracefully - metadata is optional for some operations
+            safe_print(f"WARNING: Could not read metadata for {id}: {e}")
+            safe_print(f"  Continuing without metadata - some operations may be less accurate")
+            # Return a default metadata structure to prevent crashes
+            return {
+                "visibleName": "Unknown",
+                "parent": "",
+                "type": "DocumentType",
+                "lastModified": "0",
+                "lastOpened": "0"
+            }
+        except FileNotFoundError:
+            # Metadata file doesn't exist - return default
+            return {
+                "visibleName": "Unknown",
+                "parent": "",
+                "type": "DocumentType",
+                "lastModified": "0",
+                "lastOpened": "0"
+            }
+        except Exception as e:
+            # Other errors - log and return default
+            safe_print(f"WARNING: Error reading metadata for {id}: {e}")
+            return {
+                "visibleName": "Unknown",
+                "parent": "",
+                "type": "DocumentType",
+                "lastModified": "0",
+                "lastOpened": "0"
+            }
 
     # Upload a file from the PC storage to RM
     def upload_file(self, src_path, dest_name): # TODO: use same prefix as read methods
@@ -254,9 +322,27 @@ class Remarkable:
     # Create a file in the PC storage and upload it to RM
     def write_file(self, filename, content):
         # write locally
-        path_local = f"{self.raw_dir_local}/{filename}"
-        with open(path_local, "w") as file:
-            file.write(content)
+        path_local = os.path.join(self.raw_dir_local, filename)
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(path_local), exist_ok=True)
+        # Handle permission errors with retries
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with open(path_local, "w", encoding='utf-8') as file:
+                    file.write(content)
+                break  # Success - exit retry loop
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    # Wait a bit and retry (file might be locked by another process)
+                    time.sleep(0.1 * (attempt + 1))
+                    continue
+                else:
+                    # Last attempt failed - log and raise
+                    safe_print(f"WARNING: Permission denied writing {filename} after {max_retries} attempts")
+                    safe_print(f"  File path: {path_local}")
+                    safe_print(f"  Error: {e}")
+                    raise
 
         # copy same file to remarkable
         self.upload_file(path_local, filename)
@@ -690,16 +776,22 @@ class ComputerFile(AbstractFile):
             # Only update if parent already exists (not if we just created it)
             try:
                 # Check if parent metadata file exists locally (means it exists on device)
-                parent_metadata_path = f"{rm.raw_dir_local}/{parent_id}.metadata"
+                parent_metadata_path = os.path.join(rm.raw_dir_local, f"{parent_id}.metadata")
                 if os.path.exists(parent_metadata_path):
-                    parent_metadata = rm.read_metadata(parent_id)
-                    parent_metadata["lastModified"] = str(int(time.time() * 1000))  # Current time in ms
-                    print(f"    Updating parent directory metadata: {parent_id}")
-                    rm.write_metadata(parent_id, parent_metadata)
+                    try:
+                        parent_metadata = rm.read_metadata(parent_id)
+                        parent_metadata["lastModified"] = str(int(time.time() * 1000))  # Current time in ms
+                        safe_print(f"    Updating parent directory metadata: {parent_id}")
+                        rm.write_metadata(parent_id, parent_metadata)
+                    except PermissionError as e:
+                        safe_print(f"    WARNING: Permission denied updating parent metadata {parent_id}: {e}")
+                        safe_print(f"    Continuing - parent metadata update is optional")
+                    except Exception as e:
+                        safe_print(f"    WARNING: Could not update parent directory metadata: {e}")
                 else:
-                    print(f"    Note: Parent {parent_id} metadata not found locally (may have just been created)")
+                    safe_print(f"    Note: Parent {parent_id} metadata not found locally (may have just been created)")
             except Exception as e:
-                print(f"    WARNING: Could not update parent directory metadata: {e}")
+                safe_print(f"    WARNING: Could not update parent directory metadata: {e}")
                 # Continue anyway - parent might not exist yet or might be root
         
         # Upload the actual file for documents
@@ -1001,8 +1093,23 @@ if __name__ == "__main__":
     print("Will use renderer(s)", " -> ".join(renderers))
 
     # Check if metadata was downloaded (needed for accurate sync comparison)
-    metadata_files = [f for f in os.listdir(rm.raw_dir_local) if f.endswith('.metadata')]
-    metadata_available = len(metadata_files) > 0
+    try:
+        if os.path.exists(rm.raw_dir_local):
+            metadata_files = [f for f in os.listdir(rm.raw_dir_local) if f.endswith('.metadata')]
+            metadata_available = len(metadata_files) > 0
+        else:
+            metadata_files = []
+            metadata_available = False
+    except PermissionError as e:
+        safe_print(f"WARNING: Permission denied accessing metadata directory: {rm.raw_dir_local}")
+        safe_print(f"  Error: {e}")
+        safe_print(f"  Continuing without metadata - sync may be less accurate")
+        metadata_files = []
+        metadata_available = False
+    except Exception as e:
+        safe_print(f"WARNING: Error checking metadata directory: {e}")
+        metadata_files = []
+        metadata_available = False
     if not metadata_available:
         print("WARNING: No metadata files found - metadata download may have been skipped")
         print("WARNING: DROP actions will be disabled to prevent accidental file deletion")
